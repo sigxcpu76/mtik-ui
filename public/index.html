@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <style>
+        body,
+        html {
+            height: 100%;
+        }
+
+        .parent {
+            min-height: 100%;
+            width: 400px;
+            margin: 0 auto;
+            background: red;
+        }
+
+        #diagram {
+            width: 100%;
+            height: 80%;
+        }
+
+        #svgId {
+            width: 100%;
+            height: 100%;
+        }
+
+        .mermaidTooltip {
+            position: absolute;
+            text-align: center;
+            max-width: 200px;
+            padding: 2px;
+            font-family: 'trebuchet ms', verdana, arial;
+            font-size: 12px;
+            background: #ffffde;
+            border: 1px solid #aaaa33;
+            border-radius: 2px;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .page-columns .column-page-inset {
+            z-index: 100;
+            /* default z-index: 998; */
+        }
+    </style>
+    <script src="https://visjs.github.io/vis-network/standalone/umd/vis-network.min.js"></script>
+
+    <script src="https://code.jquery.com/jquery-3.7.1.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    <link rel="stylesheet" type="text/css"
+        href="https://calebjacob.github.io/tooltipster/dist/css/tooltipster.bundle.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+    <script>
+        $(document).ready(function () {
+            let container = document.getElementById('diagram');
+            $(container).css('height', '100%');
+            let options = {
+                physics: {
+                    stabilization: false,
+                    barnesHut: {
+                        springLength: 200,
+                    }
+                }
+            }
+            window._network = new vis.Network(container, {}, options);
+            loadGraph();
+        });
+
+
+        function loadGraph() {
+            // load the graph in JSON format
+            $.ajax('/api/graph', {
+                success: function (data) {
+                    let parsed = JSON.parse(data);
+                    window._data = parsed;
+                    // parse the entire graph an populate the node names in the nodes select
+                    updateGraph(parsed);
+                }
+            });
+        }
+
+
+        function sanitizeId(id) {
+            // keep just alphanumeric characters
+            return id.replace(/[^a-zA-Z0-9]/g, '');
+        }
+
+        async function updateGraph(data) {
+            if (!data) {
+                return;
+            }
+
+            // group data by CAP
+            let capData = {};
+            for (const node in data) {
+                if (data[node].cap) {
+                    if (!capData[data[node].cap]) {
+                        capData[data[node].cap] = [];
+                    }
+                    capData[data[node].cap].push(data[node]);
+                }
+            }
+            window._capData = capData;
+
+
+            let dotSource = "digraph {\n";
+
+            // for each cap we generate a subgraph
+            for (const cap in capData) {
+                dotSource += "subgraph {\n"
+                let capId = sanitizeId(cap);
+                dotSource += capId + ' [label="' + cap + '" shape="box" color="#d0d0ff"];\n';
+
+                // for each client we generate a node
+                
+                for (const node of capData[cap]) {
+                    let mac = sanitizeId(node.macAddress);
+
+                    // compute pen color based on signal
+                    let rssi = parseInt(node.rssi);
+
+                    let nodeColor = '#d0ffd0';
+                    if (rssi < -75) {
+                        nodeColor = '#ffd0d0';
+                    } else if (rssi < -60) {
+                        nodeColor = '#ffffd0';
+                    }
+
+
+                    let friendlyName = node.comment || node.hostName || node.macAddress;
+
+                    if (friendlyName != node.macAddress) {
+                        friendlyName += '\n(' + node.macAddress + ')';
+                    }
+
+                    dotSource += mac + ' [label="' + friendlyName + '" color="' + nodeColor + '"];\n';
+
+                }
+
+
+                dotSource += "}\n";
+
+
+                // we link each client to the ap
+                for (const node of capData[cap]) {
+                    let mac = sanitizeId(node.macAddress);
+
+                    // compute a link label based on rssi and band
+                    let linkLabel = node.rssi + ' ' + node.band;
+
+                    // compute penwidth based on rssi
+                    let penWidth = 2; //parseInt((100 + parseInt(node.rssi)) / 10);
+
+                    if (node.band.startsWith('5')) {
+                        penWidth *= 2;
+                    }
+
+                    // compute pen color based on signal
+                    let rssi = parseInt(node.rssi);
+
+                    let penColor = 'green';
+
+                    if (rssi < -75) {
+                        penColor = 'red';
+                    } else if (rssi < -60) {
+                        penColor = 'yellow';
+                    }
+
+                    dotSource += capId + ' -- ' + mac + ' [label="' + linkLabel + '" penwidth=' + penWidth + ' color="' + penColor + '"];\n';
+                }
+
+            }
+
+            // we also want to link all caps to themselves
+            // add a central node named network
+            dotSource += 'network [label="Core Switch" color="#d0d0ff"];\n';
+            for (const cap1 in capData) {
+                // for (const cap2 in capData) {
+                //     if (cap1 !== cap2) {
+                //         dotSource += sanitizeId(cap1) + ' -- ' + sanitizeId(cap2) + ';\n';
+                //     }
+                // }
+                dotSource += sanitizeId(cap1) + ' -- network [penwidth=2 color="black"];\n';
+            }
+
+            dotSource += "}";
+
+            window._dotSource = dotSource;
+
+            // render the graph
+
+            let parsedNetwork = vis.parseDOTNetwork(dotSource);
+            window._network.setData(parsedNetwork);
+
+        }
+    </script>
+</head>
+
+<body>
+
+    <div id="diagram">
+
+    </div>
+</body>
+
+</html>
